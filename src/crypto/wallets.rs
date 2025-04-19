@@ -1,6 +1,6 @@
 use super::types::*;
 use crate::Result;
-use bincode::{de, deserialize, serialize};
+use bincode::{deserialize, serialize};
 use bitcoincash_addr::*;
 use crypto::digest::Digest;
 use crypto::ripemd160::Ripemd160;
