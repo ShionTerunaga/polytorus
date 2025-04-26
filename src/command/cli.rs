@@ -238,7 +238,7 @@ fn error_start_miner(name: &str, usage: &str) -> ! {
     exit(1)
 }
 
-fn cmd_create_wallet(encryption: EncryptionType) -> Result<String> {
+pub fn cmd_create_wallet(encryption: EncryptionType) -> Result<String> {
     let mut ws = Wallets::new()?;
     let address = ws.create_wallet(encryption);
     ws.save_all()?;
