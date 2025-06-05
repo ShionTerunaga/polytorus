@@ -6,10 +6,12 @@
 
 use crate::blockchain::block::Block;
 use crate::blockchain::utxoset::UTXOSet;
+use crate::crypto::ecdsa::EcdsaCrypto;
 use crate::crypto::fndsa::FnDsaCrypto;
 use crate::crypto::traits::CryptoProvider;
 use crate::crypto::transaction::Transaction;
-use crate::crypto::wallets::Wallets;
+use crate::crypto::types::EncryptionType;
+use crate::crypto::wallets::{extract_encryption_type, Wallets};
 use crate::Result;
 
 use std::collections::HashMap;
@@ -489,7 +491,7 @@ impl Server {
         let peers = self.get_peers();
         for peer in peers {
             if peer != self.node_address {
-                self.send_inv(&peer, "block", vec![new_block.get_hash()])?;
+                self.send_inv(&peer, "block", vec![new_block.get_hash().to_string()])?;
             }
         }
 
@@ -621,11 +623,9 @@ impl Server {
 
         self.send_message(addr, "getdata", &msg)
     }
-
     /// Sends a block to a peer
     fn send_block(&self, addr: &str, block: &Block) -> Result<()> {
         info!("Sending block to {}: {}", addr, block.get_hash());
-
         let msg = BlockMessage {
             addr_from: self.node_address.clone(),
             block: block.clone(),
@@ -909,9 +909,8 @@ impl Server {
             msg.addr_from,
             msg.block.get_hash()
         );
-
         // Add block to our chain
-        self.add_block(msg.block.clone())?;
+        self.add_block(msg.block)?;
 
         // Process any blocks in transit
         let mut in_transit = self.get_blocks_in_transit();
@@ -1106,12 +1105,34 @@ impl Server {
                 });
             }
         };
-
-        // Sign the transaction
         let mut tx = msg.transaction.clone();
-        let crypto = FnDsaCrypto;
 
-        match self.sign_transaction(&mut tx, &wallet.secret_key, &crypto) {
+        // Extract encryption type from wallet address
+        let (_, encryption_type) = match extract_encryption_type(&msg.address) {
+            Ok(result) => result,
+            Err(e) => {
+                return Ok(SignResponseMessage {
+                    addr_from: self.node_address.clone(),
+                    transaction: msg.transaction.clone(),
+                    success: false,
+                    error_message: format!("Failed to extract encryption type: {}", e),
+                });
+            }
+        };
+
+        // Create appropriate crypto provider
+        let result = match encryption_type {
+            EncryptionType::FNDSA => {
+                let crypto = FnDsaCrypto;
+                self.sign_transaction(&mut tx, &wallet.secret_key, &crypto)
+            }
+            EncryptionType::ECDSA => {
+                let crypto = EcdsaCrypto;
+                self.sign_transaction(&mut tx, &wallet.secret_key, &crypto)
+            }
+        };
+
+        match result {
             Ok(_) => {
                 info!("Successfully signed transaction for {}", msg.address);
                 Ok(SignResponseMessage {
@@ -1461,15 +1482,26 @@ mod tests {
         let decoded = decode_command(&bytes).unwrap();
         assert_eq!(&cmd[..CMD_LEN], decoded);
     }
-
     #[test]
     fn test_server_creation() {
-        let mut wallets = Wallets::new().unwrap();
+        use crate::config::DataContext;
+        use std::path::PathBuf;
+
+        // Use a test-specific data directory to avoid conflicts with existing data
+        let test_context = DataContext::new(PathBuf::from("test_data_server"));
+
+        // Create wallets with test context
+        let mut wallets = Wallets::new_with_context(test_context.clone()).unwrap();
         let address = wallets.create_wallet(EncryptionType::FNDSA);
         wallets.save_all().unwrap();
 
-        let bc =
-            Blockchain::new().unwrap_or_else(|_| Blockchain::create_blockchain(address).unwrap());
+        // Create blockchain with test context
+        let bc = match Blockchain::new_with_context(test_context.clone()) {
+            Ok(bc) => bc,
+            Err(_) => {
+                Blockchain::create_blockchain_with_context(address, test_context.clone()).unwrap()
+            }
+        };
 
         let utxo_set = UTXOSet { blockchain: bc };
         let server = Server::new("127.0.0.1", "7000", "", None, utxo_set).unwrap();
@@ -1479,5 +1511,8 @@ mod tests {
 
         let inner = server.inner.lock().unwrap();
         assert!(inner.peers.is_empty());
+
+        // Clean up test data
+        let _ = std::fs::remove_dir_all("test_data_server");
     }
 }

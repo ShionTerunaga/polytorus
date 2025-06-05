@@ -3,8 +3,12 @@
 // src/lib.rs
 pub mod blockchain;
 pub mod command;
+pub mod config;
 pub mod crypto;
+pub mod modular;
 pub mod network;
+pub mod smart_contract;
+pub mod test_helpers;
 pub mod webserver;
 
 #[macro_use]

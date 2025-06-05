@@ -2,3 +2,9 @@
 proptest-regressions/
 data/
 .idea/
+coverage.lcov
+coverage-html
+temp*
+target/
+*.wasm
+modular_config.toml
